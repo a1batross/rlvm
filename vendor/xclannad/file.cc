@@ -85,24 +85,21 @@ int g_isBigEndian = IsBigEndian();
 
 # define NAMLEN(dirent) strlen((dirent)->d_name)
 
-#if HAVE_LIBZ
-#include<zlib.h>
-#endif
-#if HAVE_LIBPNG
-#include<png.h>
-#endif
-#if HAVE_LIBJPEG
-extern "C" {
-#include<jpeglib.h>
-}
-#endif
-
 #include "file.h"
 #include "endian.hpp"
+
+#include <set>
+#include <tuple>
 
 using namespace std;
 
 // -----------------------------------------------------------------------
+
+bool GRPCONV::REGION::operator<(const REGION& rhs) const {
+  return
+      std::tie(x1, y1, x2, y2, origin_x, origin_y) <
+    std::tie(rhs.x1, rhs.y1, rhs.x2, rhs.y2, rhs.origin_x, rhs.origin_y);
+}
 
 /**********************************************
 **
@@ -161,33 +158,6 @@ public:
 	~BMPCONV() {};
 	bool Read(char* image);
 };
-#if HAVE_LIBPNG
-class PNGCONV : public GRPCONV {
-	const char* png_data;
-	static void png_read(png_structp, png_bytep, png_size_t);
-
-public:
-	PNGCONV(const char* _inbuf, int _inlen, const char* fname);
-	~PNGCONV() {};
-	bool Read(char* image);
-};
-#endif
-
-#if HAVE_LIBJPEG
-class JPEGCONV : public GRPCONV {
-
-public:
-	JPEGCONV(const char* _inbuf, int _inlen, const char* fname);
-	~JPEGCONV() {};
-	bool Read(char* image);
-	void SetupSrc(struct jpeg_decompress_struct* cinfo, const char* data, int size);
-	static void init_source(j_decompress_ptr cinfo);
-	static boolean fill_input_buffer(j_decompress_ptr cinfo);
-	static void skip_input_data(j_decompress_ptr cinfo, long num_bytes);
-	static boolean resync_to_restart(j_decompress_ptr cinfo, int desired);
-	static void term_source(j_decompress_ptr cinf);
-};
-#endif
 
 GRPCONV* GRPCONV::AssignConverter(const char* inbuf, int inlen, const char* fname) {
 	/* ファイルの内容に応じたコンバーターを割り当てる */
@@ -197,20 +167,6 @@ GRPCONV* GRPCONV::AssignConverter(const char* inbuf, int inlen, const char* fnam
 		conv = new PDTCONV(inbuf, inlen, fname);
 		if (conv->data == 0) { delete conv; conv = 0;}
 	}
-#if HAVE_LIBPNG
-	unsigned char png_magic[4] = {0x89, 'P', 'N', 'G'};
-	if (conv == 0 && memcmp(inbuf, png_magic,4) == 0) {
-		conv = new PNGCONV(inbuf, inlen, fname);
-		if (conv->data == 0) { delete conv; conv = 0;}
-	}
-#endif
-#if HAVE_LIBJPEG
-	if ( conv == 0 && *(unsigned char*)inbuf == 0xff && *(unsigned char*)(inbuf+1) == 0xd8 &&
-		(strncmp(inbuf+6, "JFIF",4) == 0 || strncmp(inbuf+6,"Exif",4) == 0)) {
-		conv = new JPEGCONV(inbuf, inlen, fname);
-		if (conv->data == 0) { delete conv; conv = 0;}
-	}
-#endif
 	if (conv == 0 && inbuf[0]=='B' && inbuf[1]=='M' && read_little_endian_int(inbuf+10)==0x36 && read_little_endian_int(inbuf+14) == 0x28) { // Windows BMP
 		conv = new BMPCONV(inbuf, inlen, fname);
 		if (conv->data == 0) { delete conv; conv = 0;}
@@ -301,6 +257,8 @@ G00CONV::G00CONV(const char* _inbuf, int _inlen, const char* filename) {
 
     region_table = vector<REGION>(head_size);
 
+    int real_region_count = 0;
+    std::set<REGION> unique_regions;
     const char* head = _inbuf + 9;
     bool overlaid_image = head_size > 1;
     for (int i = 0; i < head_size; i++) {
@@ -311,16 +269,16 @@ G00CONV::G00CONV(const char* _inbuf, int _inlen, const char* filename) {
       region_table[i].origin_x = read_little_endian_int(head+16);
       region_table[i].origin_y = read_little_endian_int(head+20);
       region_table[i].Fix(w, h);
-
-      if (region_table[i].x1 != 0 || region_table[i].y1 != 0 ||
-          region_table[i].x2 != (w - 1) || region_table[i].y2 != (h - 1)) {
-        overlaid_image = false;
+      if (region_table[i].Width() &&
+          region_table[i].Height()) {
+        unique_regions.insert(region_table[i]);
+        real_region_count++;
       }
 
       head += 24;
     }
 
-    if (overlaid_image) {
+    if (real_region_count > 1 && unique_regions.size() == 1) {
       // This is one of those newer images where each region is the size of
       // width/height and is stacked on top of each other. We therefore have to
       // munge the height and the region table so each region gets its own
@@ -536,7 +494,6 @@ public:
 	static int IsRev(void) { return 1; }
 };
 
-
 bool PDTCONV::Read(char* image) {
 	if (data == 0) return false;
 
@@ -565,7 +522,6 @@ bool PDTCONV::Read(char* image) {
 	return true;
 }
 
-
 bool PDTCONV::Read_PDT10(char* image) {
 	int mask_pt = read_little_endian_int(data + 0x1c);
 
@@ -581,6 +537,7 @@ bool PDTCONV::Read_PDT10(char* image) {
 	while(lzExtract(Extract_DataType(), int(), src, dest, srcend, destend)) ;
 	return true;
 }
+
 bool PDTCONV::Read_PDT11(char* image) {
 	int index_table[16];
 	int color_table[256];
@@ -637,6 +594,7 @@ bool G00CONV::Read_Type0(char* image) {
 	delete[] uncompress_data;
 	return true;
 }
+
 bool G00CONV::Read_Type1(char* image) {
 	int i;
 	int uncompress_size = read_little_endian_int(data+9) + 1;
@@ -759,6 +717,7 @@ void GRPCONV::CopyRGBA(char* image, const char* buf) {
 	}
 	return;
 }
+
 void GRPCONV::CopyRGB(char* image, const char* buf) {
 	/* 色変換を行う */
 	int len = width * height;
@@ -772,212 +731,6 @@ void GRPCONV::CopyRGB(char* image, const char* buf) {
 	return;
 }
 
-#if HAVE_LIBPNG
-PNGCONV::PNGCONV(const char* _inbuf, int _inlen, const char* _filename) {
-	int w,h,type;
-	png_structp png_ptr = 0;
-	png_infop info_ptr = 0;
-	png_infop end_info = 0;
-
-	png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, 0, 0, 0);
-	if (!png_ptr) return;
-
-	info_ptr = png_create_info_struct(png_ptr);
-	if (!info_ptr) goto err;
-
-	end_info = png_create_info_struct(png_ptr);
-	if (!end_info) goto err;
-
-        if (setjmp(png_jmpbuf(png_ptr))) {
-                /* error occured !! */
-		goto err;
-        }
-
-	/* initialize I/O */
-	png_data = _inbuf;
-	png_set_read_fn(png_ptr, (png_voidp)this, &png_read);
-
-	png_read_info(png_ptr, info_ptr);
-
-	w = png_get_image_width(png_ptr, info_ptr);
-	h = png_get_image_height(png_ptr, info_ptr);
-	type = png_get_color_type(png_ptr, info_ptr);
-
-	if (type == PNG_COLOR_TYPE_GRAY || type == PNG_COLOR_TYPE_GRAY_ALPHA) goto err; // not supported
-
-	Init(filename, _inbuf, _inlen, w, h, type == PNG_COLOR_TYPE_RGB_ALPHA ? true : false);
-
-err:
-	if (png_ptr) {
-		if (end_info)
-			png_destroy_read_struct(&png_ptr, &info_ptr,&end_info);
-		else if (info_ptr)
-			png_destroy_read_struct(&png_ptr, &info_ptr,(png_infopp)0);
-		else
-			png_destroy_read_struct(&png_ptr, (png_infopp) 0,(png_infopp)0);
-	}
-	return;
-}
-
-bool PNGCONV::Read(char* image) {
-	if (data == 0) return false;
-	bool retcode = false;
-	int bpp = is_mask ? 4 : 3;
-	int i;
-	char* buf;
-	png_bytepp row_pointers = 0;
-
-	png_structp png_ptr = 0;
-	png_infop info_ptr = 0;
-	png_infop end_info = 0;
-
-	png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, 0, 0, 0);
-	if (!png_ptr) goto err;
-	info_ptr = png_create_info_struct(png_ptr);
-	if (!info_ptr) goto err;
-	end_info = png_create_info_struct(png_ptr);
-	if (!end_info) goto err;
-
-        if (setjmp(png_jmpbuf(png_ptr))) {
-                /* error occured !! */
-		goto err;
-        }
-
-	buf= new char[width*height*4];
-	/* initialize I/O */
-	png_data = data;
-	png_set_read_fn(png_ptr, (png_voidp)this, &png_read);
-	
-	row_pointers = (png_bytepp)png_malloc(png_ptr, height*sizeof(png_bytep));
-	for (i=0; i<height; i++) row_pointers[i] = (png_bytep)(buf + width*bpp*i);
-	png_set_rows(png_ptr, info_ptr, row_pointers);
-
-	png_read_png(png_ptr, info_ptr,
-           PNG_TRANSFORM_STRIP_16 | PNG_TRANSFORM_EXPAND | PNG_TRANSFORM_PACKING | PNG_TRANSFORM_BGR,0);
-
-	if (buf != image) {
-		CopyRGBA(image, buf);
-		delete[] buf;
-	}
-	png_free(png_ptr, (png_voidp)row_pointers);
-
-	retcode = true;
-err:
-	if (png_ptr) {
-		if (end_info)
-			png_destroy_read_struct(&png_ptr, &info_ptr,&end_info);
-		else if (info_ptr)
-			png_destroy_read_struct(&png_ptr, &info_ptr,(png_infopp)0);
-		else
-			png_destroy_read_struct(&png_ptr, (png_infopp) 0,(png_infopp)0);
-	}
-	return retcode;
-}
-
-void PNGCONV::png_read(png_structp png_ptr, png_bytep d, png_size_t sz) {
-	PNGCONV* orig = (PNGCONV*)png_get_io_ptr(png_ptr);
-	memcpy(d, orig->png_data, sz);
-	orig->png_data += sz;
-	return;
-}
-#endif /* HAVE_LIBPNG */
-
-#if HAVE_LIBJPEG
-JPEGCONV::JPEGCONV(const char* _inbuf, int _inlen, const char* _filename) {
-	int w,h,type;
-	JSAMPARRAY rows, rows_orig; int i;
-	char* buf = 0;
-
-	struct jpeg_decompress_struct cinfo;
-	struct jpeg_error_mgr jerr;
-	cinfo.err = jpeg_std_error(&jerr);
-	jpeg_create_decompress(&cinfo);
-	cinfo.src = new jpeg_source_mgr;
-	SetupSrc(&cinfo, _inbuf, _inlen);
-
-	if (jpeg_read_header(&cinfo, TRUE) == JPEG_HEADER_OK)  {
-		Init(filename, _inbuf, _inlen, cinfo.image_width, cinfo.image_height, false);
-	}
-	delete cinfo.src;
-	cinfo.src = 0;
-	jpeg_destroy_decompress(&cinfo);
-	return;
-}
-		
-bool JPEGCONV::Read(char* image) {
-	if (data == 0) return false;
-	bool retcode = false;
-	JSAMPARRAY rows, rows_orig; int i;
-	char* buf = 0;
-
-	struct jpeg_decompress_struct cinfo;
-	struct jpeg_error_mgr jerr;
-	cinfo.err = jpeg_std_error(&jerr);
-	jpeg_create_decompress(&cinfo);
-	cinfo.src = new jpeg_source_mgr;
-	SetupSrc(&cinfo, data, datalen);
-
-	if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) goto err;
-
-	cinfo.out_color_space = JCS_RGB;
-	
-	jpeg_start_decompress(&cinfo);
-
-	rows = new JSAMPROW[height];
-	rows_orig = rows;
-	buf = new char[width*height*3];
-	for (i=0; i<height; i++) rows[i] = (JSAMPROW)(buf+width*3*i);
-
-	for (i=0; i<height; ) {
-		int cnt = jpeg_read_scanlines(&cinfo, rows, height-i);
-		rows += cnt;
-		i += cnt;
-	}
-	delete[] rows_orig;
-	CopyRGBA_rev(image, buf);
-	delete[] buf;
-	
-	jpeg_finish_decompress(&cinfo);
-	retcode = true;
-err:
-	delete cinfo.src;
-	cinfo.src = 0;
-	jpeg_destroy_decompress(&cinfo);
-	return retcode;
-}
-
-void JPEGCONV::init_source(j_decompress_ptr cinfo) {
-}
-boolean JPEGCONV::fill_input_buffer(j_decompress_ptr cinfo) {
-	static char dummy[1024];
-	memset(dummy, 0, 1024);
-	cinfo->src->next_input_byte = (const JOCTET*)dummy;
-	cinfo->src->bytes_in_buffer = 1024;
-	fprintf(stderr,"JPEGCONV::fill_input_buffer: warning corrupted jpeg stream\n");
-	return TRUE;
-}
-void JPEGCONV::skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
-	if (cinfo->src->bytes_in_buffer > num_bytes) {
-		cinfo->src->next_input_byte += num_bytes;
-		cinfo->src->bytes_in_buffer -= num_bytes;
-	}
-}
-boolean JPEGCONV::resync_to_restart(j_decompress_ptr cinfo, int desired) {
-	return jpeg_resync_to_restart(cinfo, desired);
-}
-void JPEGCONV::term_source(j_decompress_ptr cinf) {
-}
-
-void JPEGCONV::SetupSrc(struct jpeg_decompress_struct* cinfo, const char* data, int size) {
-	cinfo->src->next_input_byte = (const JOCTET*) data;
-	cinfo->src->bytes_in_buffer = size;
-	cinfo->src->init_source = init_source;
-	cinfo->src->fill_input_buffer = fill_input_buffer;
-	cinfo->src->skip_input_data = skip_input_data;
-	cinfo->src->resync_to_restart = resync_to_restart;
-	cinfo->src->term_source = term_source;
-}
-#endif /* HAVE_LIBJPEG */
 BMPCONV::BMPCONV(const char* _inbuf, int _inlen, const char* _filename) {
 	/* データから情報読み込み */
 	int w = read_little_endian_int(_inbuf + 0x12);

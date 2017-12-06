@@ -6,9 +6,8 @@
 // happen in various parts of the application, and allows users to register
 // observers for various classes of events that they're interested in.
 
-#ifndef CONTENT_COMMON_NOTIFICATION_SERVICE_H_
-#define CONTENT_COMMON_NOTIFICATION_SERVICE_H_
-#pragma once
+#ifndef SRC_BASE_NOTIFICATION_SERVICE_H_
+#define SRC_BASE_NOTIFICATION_SERVICE_H_
 
 #include <map>
 
@@ -93,8 +92,8 @@ class NotificationService {
 
   // Keeps track of the observers for each type of notification.
   // Until we get a prohibitively large number of notification types,
-  // a simple array is probably the fastest way to dispatch.
+  // a simple array is probably the fastest way to Dispatch.
   NotificationSourceMap observers_[NotificationType::NOTIFICATION_TYPE_COUNT];
 };
 
-#endif  // CONTENT_COMMON_NOTIFICATION_SERVICE_H_
+#endif  // SRC_BASE_NOTIFICATION_SERVICE_H_

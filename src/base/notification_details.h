@@ -5,11 +5,10 @@
 // This file defines the type used to provide details for NotificationService
 // notifications.
 
-#ifndef CONTENT_COMMON_NOTIFICATION_DETAILS_H_
-#define CONTENT_COMMON_NOTIFICATION_DETAILS_H_
-#pragma once
+#ifndef SRC_BASE_NOTIFICATION_DETAILS_H_
+#define SRC_BASE_NOTIFICATION_DETAILS_H_
 
-#include <stdint.h>
+#include <cstdint>
 
 // Do not declare a NotificationDetails directly--use either
 // "Details<detailsclassname>(detailsclasspointer)" or
@@ -54,4 +53,4 @@ class Details : public NotificationDetails {
   T* ptr() const { return static_cast<T*>(const_cast<void*>(ptr_)); }
 };
 
-#endif  // CONTENT_COMMON_NOTIFICATION_DETAILS_H_
+#endif  // SRC_BASE_NOTIFICATION_DETAILS_H_

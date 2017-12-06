@@ -24,6 +24,8 @@
 #ifndef __WAVEFILE__
 #define __WAVEFILE__
 
+#include <stdio.h>
+
 #define WW_BADOUTPUTFILE	1
 #define WW_BADWRITEHEADER	2
 
@@ -107,15 +109,6 @@ struct OggFILE : WAVFILE {
 
 	OggFILE(FILE* stream, int size);
 	~OggFILE();
-	void Seek(int count);
-	int Read(char* buf, int blksize, int blklen);
-};
-
-struct MP3FILE : WAVFILE {
-	struct MP3FILE_impl* pimpl;
-
-	MP3FILE(FILE* stream, int size);
-	~MP3FILE();
 	void Seek(int count);
 	int Read(char* buf, int blksize, int blklen);
 };
